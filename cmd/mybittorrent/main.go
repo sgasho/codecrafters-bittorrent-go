@@ -51,18 +51,38 @@ func decodeBencode(bencodedString string, start int) (any, int, error) {
 		}
 		return number, eIndex + 1, nil
 	case bencodedString[0] == 'l':
-		//if bencodedString[len(bencodedString)-1] != 'e' {
-		//	return nil, 0, errors.New("invalid array structure: needs e at last")
-		//}
 		bencodedString = bencodedString[1:]
 		elements := make([]any, 0)
-		consumed := 2
+		consumed := 2 // l ... e -> l, e -> consume 2 chars
 		for bencodedString[0] != 'e' {
 			decoded, nextStartsAt, err := decodeBencode(bencodedString, 0)
 			if err != nil {
 				return nil, 0, err
 			}
 			elements = append(elements, decoded)
+			if nextStartsAt >= len(bencodedString) {
+				return elements, nextStartsAt, nil
+			}
+			bencodedString = bencodedString[nextStartsAt:]
+			consumed += nextStartsAt
+		}
+		return elements, consumed, nil
+	case bencodedString[0] == 'd':
+		bencodedString = bencodedString[1:]
+		elements := make(map[string]any)
+		consumed := 2
+		for bencodedString[0] != 'e' {
+			key, nextStartsAt, err := decodeBencode(bencodedString, 0)
+			if err != nil {
+				return nil, 0, err
+			}
+			bencodedString = bencodedString[nextStartsAt:]
+			consumed += nextStartsAt
+			value, nextStartsAt, err := decodeBencode(bencodedString, 0)
+			if err != nil {
+				return nil, 0, err
+			}
+			elements[key.(string)] = value
 			if nextStartsAt >= len(bencodedString) {
 				return elements, nextStartsAt, nil
 			}
@@ -86,7 +106,11 @@ func main() {
 			return
 		}
 
-		jsonOutput, _ := json.Marshal(decoded)
+		jsonOutput, err := json.Marshal(decoded)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
 		fmt.Println(string(jsonOutput))
 	} else {
 		fmt.Println("Unknown command: " + command)
