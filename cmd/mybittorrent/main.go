@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"regexp"
 	"strconv"
 	"unicode"
 	// bencode "github.com/jackpal/bencode-go" // Available if you need it!
@@ -16,7 +15,8 @@ var _ = json.Marshal
 // Example:
 // - 5:hello -> hello
 // - 10:hello12345 -> hello12345
-func decodeBencode(bencodedString string) (interface{}, error) {
+func decodeBencode(bencodedString string, start int) (any, int, error) {
+	bencodedString = bencodedString[start:]
 	switch {
 	case unicode.IsDigit(rune(bencodedString[0])):
 		var firstColonIndex int
@@ -32,21 +32,46 @@ func decodeBencode(bencodedString string) (interface{}, error) {
 
 		length, err := strconv.Atoi(lengthStr)
 		if err != nil {
-			return "", err
+			return "", 0, err
 		}
-
-		return bencodedString[firstColonIndex+1 : firstColonIndex+1+length], nil
+		return bencodedString[firstColonIndex+1 : firstColonIndex+1+length], length + 2, nil
 	case bencodedString[0] == 'i':
-		re := regexp.MustCompile(`i(-?\d+)e`)
+		var eIndex int
 
-		matches := re.FindStringSubmatch(bencodedString)
-		if len(matches) < 2 {
-			return nil, fmt.Errorf("number not found in input")
+		for i := 0; i < len(bencodedString); i++ {
+			if bencodedString[i] == 'e' {
+				eIndex = i
+				break
+			}
 		}
 
-		return strconv.Atoi(matches[1])
+		number, err := strconv.Atoi(bencodedString[1:eIndex])
+		if err != nil {
+			return "", 0, err
+		}
+		return number, eIndex + 1, nil
+	case bencodedString[0] == 'l':
+		//if bencodedString[len(bencodedString)-1] != 'e' {
+		//	return nil, 0, errors.New("invalid array structure: needs e at last")
+		//}
+		bencodedString = bencodedString[1:]
+		elements := make([]any, 0)
+		consumed := 2
+		for bencodedString[0] != 'e' {
+			decoded, nextStartsAt, err := decodeBencode(bencodedString, 0)
+			if err != nil {
+				return nil, 0, err
+			}
+			elements = append(elements, decoded)
+			if nextStartsAt >= len(bencodedString) {
+				return elements, nextStartsAt, nil
+			}
+			bencodedString = bencodedString[nextStartsAt:]
+			consumed += nextStartsAt
+		}
+		return elements, consumed, nil
 	}
-	return nil, fmt.Errorf("invalid input")
+	return nil, 0, fmt.Errorf("invalid input")
 }
 
 func main() {
@@ -55,7 +80,7 @@ func main() {
 	if command == "decode" {
 		bencodedValue := os.Args[2]
 
-		decoded, err := decodeBencode(bencodedValue)
+		decoded, _, err := decodeBencode(bencodedValue, 0)
 		if err != nil {
 			fmt.Println(err)
 			return
