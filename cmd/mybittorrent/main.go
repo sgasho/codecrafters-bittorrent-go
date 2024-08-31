@@ -22,7 +22,7 @@ type Torrent struct {
 
 func (t *Torrent) String() string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("TrackerURL: %s\n", t.TrackerURL))
+	b.WriteString(fmt.Sprintf("Tracker URL: %s\n", t.TrackerURL))
 	b.WriteString(t.Info.String())
 	return b.String()
 }
