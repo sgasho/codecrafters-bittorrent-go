@@ -3,14 +3,40 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
+	"strings"
 	"unicode"
 	// bencode "github.com/jackpal/bencode-go" // Available if you need it!
 )
 
 // Ensures gofmt doesn't remove the "os" encoding/json import (feel free to remove this!)
 var _ = json.Marshal
+
+type Torrent struct {
+	TrackerURL string `json:"announce"`
+	CreatedBy  string `json:"created_by"`
+	Info       *Info  `json:"info"`
+}
+
+func (t *Torrent) String() string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("TrackerURL: %s\n", t.TrackerURL))
+	b.WriteString(t.Info.String())
+	return b.String()
+}
+
+type Info struct {
+	Length      uint64 `json:"length"`
+	Name        string `json:"name"`
+	PieceLength uint64 `json:"piece length"`
+	Pieces      string `json:"pieces"`
+}
+
+func (i *Info) String() string {
+	return fmt.Sprintf("Length: %d\n", i.Length)
+}
 
 // Example:
 // - 5:hello -> hello
@@ -97,7 +123,8 @@ func decodeBencode(bencodedString string, start int) (any, int, error) {
 func main() {
 	command := os.Args[1]
 
-	if command == "decode" {
+	switch command {
+	case "decode":
 		bencodedValue := os.Args[2]
 
 		decoded, _, err := decodeBencode(bencodedValue, 0)
@@ -112,7 +139,30 @@ func main() {
 			return
 		}
 		fmt.Println(string(jsonOutput))
-	} else {
+	case "info":
+		filename := os.Args[2]
+		f, err := os.ReadFile(filename)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		decoded, _, err := decodeBencode(string(f), 0)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		jsonOutput, err := json.Marshal(decoded)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		var torrent Torrent
+		if err := json.Unmarshal(jsonOutput, &torrent); err != nil {
+			log.Fatal(err)
+		}
+
+		fmt.Print(torrent.String())
+	default:
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
 	}
