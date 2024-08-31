@@ -34,7 +34,7 @@ func decodeBencode(bencodedString string, start int) (any, int, error) {
 		if err != nil {
 			return "", 0, err
 		}
-		return bencodedString[firstColonIndex+1 : firstColonIndex+1+length], length + 2, nil
+		return bencodedString[firstColonIndex+1 : firstColonIndex+1+length], length + len(lengthStr) + 1, nil
 	case bencodedString[0] == 'i':
 		var eIndex int
 
