@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"encoding/binary"
 	"encoding/hex"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -120,7 +122,10 @@ func (t *Torrent) Get() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	infoHashBytes, _ := hex.DecodeString(infoHash)
+	infoHashBytes, err := hex.DecodeString(infoHash)
+	if err != nil {
+		return nil, err
+	}
 
 	params := url.Values{}
 	params.Add("info_hash", string(infoHashBytes))
@@ -270,4 +275,91 @@ func DecodeBencode(bencodedString string, start int) (any, int, error) {
 		return elements, consumed, nil
 	}
 	return nil, 0, fmt.Errorf("invalid input")
+}
+
+type HandShakeRequest struct {
+	PeerAddr       string
+	ProtocolStrLen int
+	ProtocolString string
+	InfoHash       []byte
+	PeerID         []byte
+}
+
+func (t *Torrent) GetHandShakeRequest(peerAddr string) (*HandShakeRequest, error) {
+	infoHash, err := t.Info.Hash()
+	if err != nil {
+		return nil, err
+	}
+	return &HandShakeRequest{
+		PeerAddr:       peerAddr,
+		ProtocolStrLen: 19,
+		ProtocolString: "BitTorrent protocol",
+		InfoHash:       []byte(infoHash),
+		PeerID:         []byte("00112233445566778899"),
+	}, nil
+}
+
+type HandShakeResponse struct {
+	ProtocolStrLen int
+	ProtocolString string
+	InfoHash       []byte
+	PeerID         []byte
+}
+
+const (
+	reservedBytesLen = 8
+	infoHashLen      = 20
+)
+
+func NewHandShakeResponse(b []byte) *HandShakeResponse {
+	protocolStrLen := int(b[0])
+	protocolStr := b[1 : 1+protocolStrLen]
+	infoHash := b[1+protocolStrLen+reservedBytesLen : 1+protocolStrLen+reservedBytesLen+infoHashLen]
+	peerID := b[1+protocolStrLen+reservedBytesLen+infoHashLen:]
+	return &HandShakeResponse{
+		ProtocolStrLen: protocolStrLen,
+		ProtocolString: string(protocolStr),
+		InfoHash:       infoHash,
+		PeerID:         peerID,
+	}
+}
+
+func (r *HandShakeResponse) StringPeerID() string {
+	return fmt.Sprintf("Peer ID: %s", hex.EncodeToString(r.PeerID))
+}
+
+func (h *HandShakeRequest) Do() (*HandShakeResponse, error) {
+	conn, err := net.Dial("tcp", h.PeerAddr)
+	if err != nil {
+		return nil, err
+	}
+	defer func(conn net.Conn) {
+		err := conn.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}(conn)
+
+	var reqBuf bytes.Buffer
+
+	reqBuf.WriteByte(byte(h.ProtocolStrLen))
+	reqBuf.WriteString(h.ProtocolString)
+	reqBuf.Write(make([]byte, 8)) // reserved bytes
+	infoHashBytes, err := hex.DecodeString(string(h.InfoHash))
+	if err != nil {
+		return nil, err
+	}
+	reqBuf.Write(infoHashBytes)
+	reqBuf.Write(h.PeerID)
+
+	if _, err = conn.Write(reqBuf.Bytes()); err != nil {
+		return nil, err
+	}
+
+	respBuf := make([]byte, 68)
+	if _, err = conn.Read(respBuf); err != nil {
+		return nil, err
+	}
+
+	return NewHandShakeResponse(respBuf), nil
 }

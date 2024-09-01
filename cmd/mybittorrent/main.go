@@ -98,6 +98,39 @@ func main() {
 		}
 
 		fmt.Print(gotResp.Peers.String())
+	case "handshake":
+		filename := os.Args[2]
+		f, err := os.ReadFile(filename)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		decoded, _, err := DecodeBencode(string(f), 0)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		decodedMap, ok := decoded.(map[string]any)
+		if !ok {
+			log.Fatal("expected map[string]any")
+		}
+
+		torrent, err := NewTorrent(decodedMap)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		req, err := torrent.GetHandShakeRequest(os.Args[3])
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		resp, err := req.Do()
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		fmt.Println(resp.StringPeerID())
 	default:
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
