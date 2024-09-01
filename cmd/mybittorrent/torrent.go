@@ -2,9 +2,14 @@ package main
 
 import (
 	"crypto/sha1"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"unicode"
@@ -81,7 +86,7 @@ func NewTorrent(decodedBencode map[string]any) (*Torrent, error) {
 func (i *Info) String() (string, error) {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("Length: %d\n", i.Length))
-	h, err := i.SHA1()
+	h, err := i.Hash()
 	if err != nil {
 		return "", err
 	}
@@ -95,7 +100,7 @@ func (i *Info) String() (string, error) {
 	return b.String(), nil
 }
 
-func (i *Info) SHA1() (string, error) {
+func (i *Info) Hash() (string, error) {
 	h := sha1.New()
 	e, err := i.Encode()
 	if err != nil {
@@ -108,6 +113,81 @@ func (i *Info) SHA1() (string, error) {
 func (i *Info) Encode() (string, error) {
 	return fmt.Sprintf("d6:lengthi%de4:name%d:%s12:piece lengthi%de6:pieces%d:%se",
 		i.Length, len(i.Name), i.Name, i.PieceLength, len(i.Pieces), i.Pieces), nil
+}
+
+func (t *Torrent) Get() ([]byte, error) {
+	infoHash, err := t.Info.Hash()
+	if err != nil {
+		return nil, err
+	}
+	infoHashBytes, _ := hex.DecodeString(infoHash)
+
+	params := url.Values{}
+	params.Add("info_hash", string(infoHashBytes))
+	params.Add("peer_id", "00112233445566778899")
+	params.Add("port", "6881")
+	params.Add("uploaded", "0")
+	params.Add("downloaded", "0")
+	params.Add("left", fmt.Sprint(t.Info.Length))
+	params.Add("compact", "1")
+
+	getURL := fmt.Sprintf("%s?%s", t.TrackerURL, params.Encode())
+	response, err := http.Get(getURL)
+	if err != nil {
+		return nil, err
+	}
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}(response.Body)
+
+	return io.ReadAll(response.Body)
+}
+
+type IPAddress string
+
+type IPAddresses []IPAddress
+
+func (as IPAddresses) String() string {
+	var b strings.Builder
+	for _, a := range as {
+		b.WriteString(fmt.Sprintf("%s\n", a))
+	}
+	return b.String()
+}
+
+func newIPAddress(ipBytes []byte) IPAddress {
+	return IPAddress(fmt.Sprintf("%d.%d.%d.%d:%d", ipBytes[0], ipBytes[1], ipBytes[2], ipBytes[3], binary.BigEndian.Uint16(ipBytes[4:6])))
+}
+
+func NewIPAddresses(ipBytes []byte) IPAddresses {
+	addrs := make([]IPAddress, 0)
+	for i := 0; i < len(ipBytes); i += 6 {
+		addrs = append(addrs, newIPAddress(ipBytes[i:i+4]))
+	}
+	return addrs
+}
+
+type GetResponse struct {
+	Interval int
+	Peers    IPAddresses
+}
+
+func NewGetResponse(dict map[string]any) (*GetResponse, error) {
+	interval, ok := dict["interval"].(int)
+	if !ok {
+		return nil, errors.New("no interval field in Dict")
+	}
+	peers, ok := dict["peers"].(string)
+	if !ok {
+		return nil, errors.New("no peers field in Dict")
+	}
+	return &GetResponse{
+		Interval: interval,
+		Peers:    NewIPAddresses([]byte(peers)),
+	}, nil
 }
 
 // Example:
