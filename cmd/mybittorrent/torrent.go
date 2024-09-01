@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -278,14 +279,14 @@ func DecodeBencode(bencodedString string, start int) (any, int, error) {
 }
 
 type HandShakeRequest struct {
-	PeerAddr       string
+	PeerAddr       IPAddress
 	ProtocolStrLen int
 	ProtocolString string
 	InfoHash       []byte
 	PeerID         []byte
 }
 
-func (t *Torrent) GetHandShakeRequest(peerAddr string) (*HandShakeRequest, error) {
+func (t *Torrent) GetHandShakeRequest(peerAddr IPAddress) (*HandShakeRequest, error) {
 	infoHash, err := t.Info.Hash()
 	if err != nil {
 		return nil, err
@@ -328,17 +329,11 @@ func (r *HandShakeResponse) StringPeerID() string {
 	return fmt.Sprintf("Peer ID: %s", hex.EncodeToString(r.PeerID))
 }
 
-func (h *HandShakeRequest) Do() (*HandShakeResponse, error) {
-	conn, err := net.Dial("tcp", h.PeerAddr)
+func (h *HandShakeRequest) Do() (*HandShakeResponse, net.Conn, error) {
+	conn, err := net.Dial("tcp", string(h.PeerAddr))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	defer func(conn net.Conn) {
-		err := conn.Close()
-		if err != nil {
-			log.Fatal(err)
-		}
-	}(conn)
 
 	var reqBuf bytes.Buffer
 
@@ -347,19 +342,158 @@ func (h *HandShakeRequest) Do() (*HandShakeResponse, error) {
 	reqBuf.Write(make([]byte, 8)) // reserved bytes
 	infoHashBytes, err := hex.DecodeString(string(h.InfoHash))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	reqBuf.Write(infoHashBytes)
 	reqBuf.Write(h.PeerID)
 
 	if _, err = conn.Write(reqBuf.Bytes()); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	respBuf := make([]byte, 68)
 	if _, err = conn.Read(respBuf); err != nil {
+		return nil, nil, err
+	}
+
+	return NewHandShakeResponse(respBuf), conn, nil
+}
+
+const (
+	lengthPrefixLen = 4
+)
+
+type PeerMessageType byte
+
+const (
+	Choke PeerMessageType = iota
+	UnChoke
+	Interested
+	NotInterested
+	Have
+	Bitfield
+	Request
+	Piece
+	Cancel
+)
+
+type PeerMessage struct {
+	LengthPrefix uint32
+	ID           PeerMessageType
+	Index        uint32
+	Begin        uint32
+	Length       uint32
+}
+
+func (m *PeerMessage) Send(conn net.Conn) error {
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.BigEndian, m); err != nil {
+		return err
+	}
+	if _, err := conn.Write(buf.Bytes()); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (t *Torrent) DownloadFile(conn net.Conn, index uint32) ([]byte, error) {
+	defer func(conn net.Conn) {
+		err := conn.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}(conn)
+
+	if _, err := waitUntilMessageType(conn, Bitfield); err != nil {
 		return nil, err
 	}
 
-	return NewHandShakeResponse(respBuf), nil
+	if err := sendMessageType(conn, Interested); err != nil {
+		return nil, err
+	}
+
+	if _, err := waitUntilMessageType(conn, UnChoke); err != nil {
+		return nil, err
+	}
+
+	pieceSize := t.Info.PieceLength
+	pieceCount := uint32(math.Ceil(float64(t.Info.Length) / float64(pieceSize)))
+	if index == pieceCount-1 {
+		pieceSize = t.Info.Length % t.Info.PieceLength
+	}
+	blockSize := 16 * 1024
+	blockCount := int(math.Ceil(float64(pieceSize) / float64(blockSize)))
+	data := make([]byte, 0)
+	for i := 0; i < blockCount; i++ {
+		blockLength := blockSize
+		if i == blockCount-1 {
+			blockLength = pieceSize - ((blockCount - 1) * blockSize)
+		}
+		msg := &PeerMessage{
+			LengthPrefix: 13,
+			ID:           Request,
+			Index:        index,
+			Begin:        uint32(i * blockSize),
+			Length:       uint32(blockLength),
+		}
+		if err := msg.Send(conn); err != nil {
+			return nil, err
+		}
+
+		payload, err := getPayload(conn)
+		if err != nil {
+			return nil, err
+		}
+		data = append(data, payload[9:]...)
+	}
+
+	return data, nil
+}
+
+// TODO: retry
+func waitUntilMessageType(conn net.Conn, msgType PeerMessageType) (payload []byte, err error) {
+	lengthPrefixBuf := make([]byte, lengthPrefixLen)
+	if _, err := conn.Read(lengthPrefixBuf); err != nil {
+		return nil, err
+	}
+
+	lengthPrefix := binary.BigEndian.Uint32(lengthPrefixBuf)
+
+	payloadBuf := make([]byte, lengthPrefix)
+	if _, err := conn.Read(payloadBuf); err != nil {
+		return nil, err
+	}
+
+	id := PeerMessageType(payloadBuf[0])
+	if id != msgType {
+		return nil, fmt.Errorf("expected %v but got %v", msgType, id)
+	}
+	return payloadBuf, nil
+}
+
+func getPayload(conn net.Conn) ([]byte, error) {
+	lengthPrefixBuf := make([]byte, lengthPrefixLen)
+	if _, err := conn.Read(lengthPrefixBuf); err != nil {
+		return nil, err
+	}
+
+	lengthPrefix := binary.BigEndian.Uint32(lengthPrefixBuf)
+
+	payloadBuf := make([]byte, lengthPrefix)
+	if _, err := io.ReadFull(conn, payloadBuf); err != nil {
+		return nil, err
+	}
+
+	id := PeerMessageType(payloadBuf[0])
+	if id != Piece {
+		return nil, fmt.Errorf("expected %v but got %v", Piece, id)
+	}
+	return payloadBuf[9:], nil
+}
+
+func sendMessageType(conn net.Conn, msgType PeerMessageType) error {
+	if _, err := conn.Write([]byte{0, 0, 0, 1, byte(msgType)}); err != nil {
+		return err
+	}
+	return nil
 }
