@@ -488,7 +488,7 @@ func getPayload(conn net.Conn) ([]byte, error) {
 	if id != Piece {
 		return nil, fmt.Errorf("expected %v but got %v", Piece, id)
 	}
-	return payloadBuf[9:], nil
+	return payloadBuf, nil
 }
 
 func sendMessageType(conn net.Conn, msgType PeerMessageType) error {
