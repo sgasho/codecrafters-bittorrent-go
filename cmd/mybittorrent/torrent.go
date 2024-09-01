@@ -44,7 +44,7 @@ func NewTorrent(decodedBencode map[string]any) (*Torrent, error) {
 	}
 	createdBy, ok := decodedBencode["created by"].(string)
 	if !ok {
-		return nil, errors.New("no created by field in Bencode")
+		createdBy = ""
 	}
 	info, ok := decodedBencode["info"].(map[string]any)
 	if !ok {
