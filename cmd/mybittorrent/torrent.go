@@ -11,6 +11,8 @@ import (
 	// bencode "github.com/jackpal/bencode-go" // Available if you need it!
 )
 
+const PieceByteLength = 20
+
 type Torrent struct {
 	TrackerURL string
 	CreatedBy  string
@@ -32,7 +34,7 @@ type Info struct {
 	Length      int
 	Name        string
 	PieceLength int
-	Pieces      []uint8
+	Pieces      []byte
 }
 
 func NewTorrent(decodedBencode map[string]any) (*Torrent, error) {
@@ -84,6 +86,12 @@ func (i *Info) String() (string, error) {
 		return "", err
 	}
 	b.WriteString(fmt.Sprintf("Info Hash: %s\n", h))
+	b.WriteString(fmt.Sprintf("Piece Length: %d\n", i.PieceLength))
+	b.WriteString("Piece Hashes:\n")
+	for start := 0; start < len(i.Pieces); start += PieceByteLength {
+		piece := i.Pieces[start : start+PieceByteLength]
+		b.WriteString(fmt.Sprintf("%s\n", hex.EncodeToString(piece)))
+	}
 	return b.String(), nil
 }
 
