@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-
-	"github.com/codecrafters-io/bittorrent-starter-go/cmd/mybittorrent/torrent"
 )
 
 // Ensures gofmt doesn't remove the "os" encoding/json import (feel free to remove this!)
@@ -19,7 +17,7 @@ func main() {
 	case "decode":
 		bencodedValue := os.Args[2]
 
-		decoded, _, err := torrent.DecodeBencode(bencodedValue, 0)
+		decoded, _, err := DecodeBencode(bencodedValue, 0)
 		if err != nil {
 			fmt.Println(err)
 			return
@@ -38,27 +36,25 @@ func main() {
 			log.Fatal(err)
 		}
 
-		decoded, _, err := torrent.DecodeBencode(string(f), 0)
+		decoded, _, err := DecodeBencode(string(f), 0)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		m, ok := decoded.(map[string]any)
+		decodedMap, ok := decoded.(map[string]any)
 		if !ok {
+			log.Fatal("expected map[string]any")
+		}
+		torrent, err := NewTorrent(decodedMap)
+		if err != nil {
 			log.Fatal(err)
 		}
 
-		ti := &torrent.Info{}
-		info, ok := m["info"].(map[string]any)
-		if !ok {
+		info, err := torrent.String()
+		if err != nil {
 			log.Fatal(err)
 		}
-		ti.Length = info["length"].(int)
-		ti.Name = info["name"].(string)
-		ti.PieceLength = info["piece length"].(int)
-		ti.Pieces = []byte(info["pieces"].(string))
-
-		fmt.Println(ti.String())
+		fmt.Print(info)
 	default:
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
