@@ -396,7 +396,7 @@ func (m *PeerMessage) Send(conn net.Conn) error {
 	return nil
 }
 
-func (t *Torrent) DownloadFile(conn net.Conn, index uint32) ([]byte, error) {
+func (t *Torrent) DownloadFile(conn net.Conn) ([]byte, error) {
 	defer func(conn net.Conn) {
 		err := conn.Close()
 		if err != nil {
@@ -416,6 +416,41 @@ func (t *Torrent) DownloadFile(conn net.Conn, index uint32) ([]byte, error) {
 		return nil, err
 	}
 
+	fileData := make([]byte, 0)
+	for i := uint32(0); i < uint32(len(t.Info.Pieces)/20); i++ {
+		piece, err := t.downloadPiece(conn, i)
+		if err != nil {
+			return nil, err
+		}
+		fileData = append(fileData, piece...)
+	}
+	return fileData, nil
+}
+
+func (t *Torrent) DownloadPiece(conn net.Conn, index uint32) ([]byte, error) {
+	defer func(conn net.Conn) {
+		err := conn.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}(conn)
+
+	if _, err := waitUntilMessageType(conn, Bitfield); err != nil {
+		return nil, err
+	}
+
+	if err := sendMessageType(conn, Interested); err != nil {
+		return nil, err
+	}
+
+	if _, err := waitUntilMessageType(conn, UnChoke); err != nil {
+		return nil, err
+	}
+
+	return t.downloadPiece(conn, index)
+}
+
+func (t *Torrent) downloadPiece(conn net.Conn, index uint32) ([]byte, error) {
 	pieceSize := t.Info.PieceLength
 	pieceCount := uint32(math.Ceil(float64(t.Info.Length) / float64(pieceSize)))
 	if index == pieceCount-1 {
