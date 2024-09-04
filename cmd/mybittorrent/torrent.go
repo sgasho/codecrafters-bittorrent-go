@@ -72,7 +72,7 @@ func NewTorrent(decodedBencode map[string]any) (*Torrent, error) {
 	}
 	pieces, ok := info["pieces"].(string)
 	if !ok {
-		return nil, errors.New("no pieces field in Bencode")
+		return nil, errors.New("no pieces field found in Bencode")
 	}
 	return &Torrent{
 		TrackerURL: trackerURL,
